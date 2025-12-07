@@ -122,7 +122,7 @@ faq_data = [
 faq_df = pd.DataFrame(faq_data)
 perguntas_faq = faq_df["pergunta_faq"].tolist()
 
-model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+model_name = "all-MiniLM-L6-v2"
 model = SentenceTransformer(model_name)
 model = SentenceTransformer(model_name)
 
@@ -264,3 +264,4 @@ def enviar_mensagem_whatsapp(to: str, message: str):
 if __name__ == "__main__":
     # Para testes locais
     app.run(host="0.0.0.0", port=8000, debug=True)
+
