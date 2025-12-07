@@ -1,147 +1,88 @@
 # app.py
 """
-Bot de FAQ para WhatsApp usando:
+Bot de FAQ para WhatsApp - Versão Otimizada (Async + Low Memory)
 - WhatsApp Cloud API
-- sentence-transformers (modelo BERT-like)
-- Flask como servidor
-
-Fluxo:
-- WhatsApp -> Webhook /webhook (POST)
-- processar_pergunta() -> buscar_resposta_faq()
-- Resposta é enviada de volta pela API do WhatsApp
+- sentence-transformers (Modelo Leve)
+- Flask + Threading (Para evitar Timeouts)
 """
 
 from flask import Flask, request
 import requests
 import os
-
+from threading import Thread  # <--- IMPORTANTE: Permite rodar a IA em segundo plano
 from sentence_transformers import SentenceTransformer, util
 import pandas as pd
 import numpy as np
 
 # ======================================================
-# 1. FAQ: COLE AQUI O SEU faq_data COMPLETO
+# 1. FAQ: DADOS
 # ======================================================
 
 faq_data = [
-    # ---- EXEMPLOS DE ENTRADAS ----
-    # Substitua ou complemente este bloco com TODAS as perguntas
-    # que você já criou no notebook (seu faq_data grande).
-
+    # ---- SEUS DADOS AQUI ----
     {
         "pergunta_faq": "O que é semaglutida?",
-        "resposta_faq": (
-            "A semaglutida é um agonista do receptor GLP-1 usada para tratamento de "
-            "diabetes tipo 2 e controle de peso. Ela reduz o apetite, retarda o "
-            "esvaziamento gástrico e melhora a sensibilidade à insulina, com eficácia "
-            "comprovada em ensaios clínicos."
-        ),
+        "resposta_faq": "A semaglutida é um agonista do receptor GLP-1 usada para tratamento de diabetes tipo 2 e controle de peso. Ela reduz o apetite, retarda o esvaziamento gástrico e melhora a sensibilidade à insulina.",
     },
     {
         "pergunta_faq": "Quais são os efeitos colaterais mais comuns da semaglutida?",
-        "resposta_faq": (
-            "Os efeitos adversos mais comuns são náuseas, vômitos, diarreia, constipação, "
-            "refluxo e sensação de estômago cheio. Esses efeitos são descritos em bula e "
-            "observados com frequência em estudos clínicos."
-        ),
+        "resposta_faq": "Os efeitos adversos mais comuns são náuseas, vômitos, diarreia, constipação, refluxo e sensação de estômago cheio.",
     },
     {
         "pergunta_faq": "O que é tirzepatida?",
-        "resposta_faq": (
-            "A tirzepatida é um agonista duplo dos receptores GIP e GLP-1. Foi desenvolvida "
-            "para o tratamento do diabetes tipo 2 e demonstrou um efeito muito potente em "
-            "perda de peso em estudos clínicos, geralmente maior que o observado com "
-            "semaglutida em doses equivalentes."
-        ),
+        "resposta_faq": "A tirzepatida é um agonista duplo dos receptores GIP e GLP-1, com efeito potente na perda de peso e controle do diabetes.",
     },
     {
         "pergunta_faq": "Quais são os efeitos colaterais da tirzepatida?",
-        "resposta_faq": (
-            "Os efeitos colaterais mais comuns incluem náuseas, diarreia, constipação, "
-            "redução do apetite e fadiga. Esses efeitos tendem a ser mais intensos ao "
-            "aumentar a dose e podem diminuir com o tempo."
-        ),
+        "resposta_faq": "Incluem náuseas, diarreia, constipação, redução do apetite e fadiga, similares aos do GLP-1, mas podem ser intensos no início.",
     },
     {
         "pergunta_faq": "O que é retatrutida?",
-        "resposta_faq": (
-            "A retatrutida é um agonista triplo que atua nos receptores GLP-1, GIP e "
-            "glucagon. Ainda está em fase de estudos clínicos, mas resultados preliminares "
-            "mostram perdas de peso superiores a 20% do peso corporal em alguns protocolos."
-        ),
+        "resposta_faq": "A retatrutida é um agonista triplo (GLP-1, GIP e glucagon) ainda em estudos, mostrando resultados promissores de perda de peso superior a 20%.",
     },
     {
         "pergunta_faq": "Quem não deve usar semaglutida ou tirzepatida?",
-        "resposta_faq": (
-            "As bulas contraindicam o uso em pessoas com histórico pessoal ou familiar de "
-            "carcinoma medular de tireoide, síndrome MEN2 e alergia conhecida aos componentes. "
-            "Também é necessária cautela em pacientes com histórico de pancreatite."
-        ),
+        "resposta_faq": "Contraindicado para quem tem histórico de carcinoma medular de tireoide, síndrome MEN2 ou alergia aos componentes.",
     },
     {
         "pergunta_faq": "Gestantes podem usar semaglutida ou tirzepatida?",
-        "resposta_faq": (
-            "Não. As bulas não recomendam o uso durante a gestação devido à falta de dados "
-            "de segurança adequados e riscos observados em estudos com animais."
-        ),
+        "resposta_faq": "Não. O uso não é recomendado durante a gestação por falta de dados de segurança.",
     },
     {
         "pergunta_faq": "Como devo armazenar a caneta de semaglutida?",
-        "resposta_faq": (
-            "Antes de aberta, a caneta deve ser mantida sob refrigeração entre 2°C e 8°C. "
-            "Após aberta, muitas apresentações permitem armazenamento em temperatura ambiente "
-            "controlada por algumas semanas, conforme especificado em bula."
-        ),
+        "resposta_faq": "Antes de aberta: geladeira (2°C a 8°C). Após aberta: temperatura ambiente (conforme a bula) ou geladeira.",
     },
     {
         "pergunta_faq": "Posso beber álcool usando semaglutida ou tirzepatida?",
-        "resposta_faq": (
-            "Pequenas quantidades de álcool costumam ser permitidas, mas o uso excessivo "
-            "pode piorar náuseas, sobrecarregar o fígado e atrapalhar o processo de "
-            "emagrecimento. Clinicamente recomenda-se moderação."
-        ),
+        "resposta_faq": "Com moderação. O álcool pode piorar náuseas e hipoglicemia, além de ser calórico.",
     },
     {
-        "pergunta_faq": "O que acontece se eu esquecer uma dose de semaglutida?",
-        "resposta_faq": (
-            "Se ainda faltarem mais de dois dias para a próxima dose, em geral pode-se "
-            "aplicar assim que lembrar. Se estiver muito próximo da próxima aplicação, "
-            "a orientação usual é pular a dose esquecida e seguir o calendário normal, "
-            "conforme bula e orientação médica."
-        ),
-    },
-
-    # --- AQUI você deve continuar colando todas as perguntas/respostas
-    #     do seu faq_data completo que já está no notebook.
+        "pergunta_faq": "O que acontece se eu esquecer uma dose?",
+        "resposta_faq": "Geralmente, se faltam mais de 2 dias para a próxima, tome assim que lembrar. Se estiver perto, pule e siga o fluxo normal. Consulte a bula.",
+    }
+    # ... Adicione o resto das suas perguntas aqui ...
 ]
 
 # ======================================================
-# 2. Preparar DataFrame, modelo e embeddings
+# 2. IA: Preparação do Modelo (Leve)
 # ======================================================
 
+# Preparar DataFrame
 faq_df = pd.DataFrame(faq_data)
 perguntas_faq = faq_df["pergunta_faq"].tolist()
 
+# Modelo Leve (80MB) para não travar o servidor gratuito
 model_name = "all-MiniLM-L6-v2"
+print(f"Carregando modelo de IA: {model_name}...")
 model = SentenceTransformer(model_name)
-model = SentenceTransformer(model_name)
-
 embeddings_faq = model.encode(perguntas_faq, convert_to_tensor=True)
-
+print("Modelo carregado com sucesso!")
 
 def buscar_resposta_faq(pergunta_usuario: str, limite_similaridade: float = 0.55) -> dict:
-    """
-    Calcula a similaridade da pergunta do usuário com o FAQ e devolve a melhor resposta.
-    """
+    """Busca a resposta mais similar no banco de dados."""
     pergunta_usuario = (pergunta_usuario or "").strip()
     if not pergunta_usuario:
-        return {
-            "pergunta_usuario": "",
-            "pergunta_encontrada": "",
-            "resposta_encontrada": "Não entendi a pergunta.",
-            "similaridade_maxima": 0.0,
-            "confiavel": False,
-        }
+        return {"confiavel": False, "resposta_encontrada": "Não entendi."}
 
     embedding_usuario = model.encode(pergunta_usuario, convert_to_tensor=True)
     similaridades = util.cos_sim(embedding_usuario, embeddings_faq)[0]
@@ -149,37 +90,76 @@ def buscar_resposta_faq(pergunta_usuario: str, limite_similaridade: float = 0.55
     indice_max = int(np.argmax(similaridades))
     similaridade_maxima = float(similaridades[indice_max])
 
-    pergunta_encontrada = faq_df.iloc[indice_max]["pergunta_faq"]
-    resposta_encontrada = faq_df.iloc[indice_max]["resposta_faq"]
-
     confiavel = similaridade_maxima >= limite_similaridade
 
     return {
-        "pergunta_usuario": pergunta_usuario,
-        "pergunta_encontrada": pergunta_encontrada,
-        "resposta_encontrada": resposta_encontrada,
-        "similaridade_maxima": similaridade_maxima,
-        "confiavel": confiavel,
+        "resposta_encontrada": faq_df.iloc[indice_max]["resposta_faq"],
+        "confiavel": confiavel
     }
 
-
 # ======================================================
-# 3. Flask + WhatsApp Cloud API
+# 3. Servidor Flask + WhatsApp
 # ======================================================
 
 app = Flask(__name__)
 
-# Pegamos token e phone_id das variáveis de ambiente
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")          # NÃO coloque o EAAT... direto no código
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")    # ex: 923030724225166
+# Variáveis de Ambiente
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
+# Tenta pegar do ambiente, se não achar, usa o seu fixo
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "token_anderson_faq")
 
+def enviar_mensagem_whatsapp(to: str, message: str):
+    """Envia a mensagem final para o usuário via API."""
+    if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
+        print("ERRO: Credenciais do WhatsApp não configuradas.")
+        return
+
+    url = f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": message},
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        print(f"Mensagem enviada para {to}. Status: {resp.status_code}")
+    except Exception as e:
+        print(f"Erro ao enviar mensagem: {e}")
+
+def tarefa_assincrona(text, phone):
+    """
+    Esta função roda em SEGUNDO PLANO (Thread).
+    Ela processa a IA pesada e envia a resposta depois.
+    """
+    try:
+        print(f"Processando IA para: {phone}...")
+        
+        # 1. Busca na IA
+        resultado = buscar_resposta_faq(text)
+        
+        if resultado["confiavel"]:
+            resposta = resultado["resposta_encontrada"]
+        else:
+            resposta = "Desculpe, não encontrei uma resposta exata no meu banco de dados sobre isso. Tente reformular a pergunta."
+
+        # 2. Envia de volta pro WhatsApp
+        enviar_mensagem_whatsapp(phone, resposta)
+        
+    except Exception as e:
+        print(f"Erro no processamento assíncrono: {e}")
+
+# --- ROTAS ---
 
 @app.route("/webhook", methods=["GET"])
 def verify():
-    """
-    Endpoint de verificação usado pelo Meta quando você cadastra o Webhook.
-    """
+    """Validação do Webhook (Meta)"""
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
@@ -188,16 +168,12 @@ def verify():
         return challenge, 200
     return "Verification failed", 403
 
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """
-    Endpoint que recebe mensagens do WhatsApp.
-    """
+    """Recebe a mensagem e libera o servidor imediatamente"""
     data = request.get_json()
-
-    # print("Webhook recebido:", data)  # debug opcional
-
+    
+    # Validação básica
     if data and "entry" in data:
         for entry in data["entry"]:
             if "changes" in entry:
@@ -205,63 +181,21 @@ def webhook():
                     value = change.get("value", {})
                     messages = value.get("messages", [])
 
+                    if not messages:
+                        continue # Ignora status de leitura/entrega
+
                     for message in messages:
                         phone = message.get("from")
                         text = message.get("text", {}).get("body", "").strip()
 
-                        if not phone or not text:
-                            continue
-
-                        resposta = processar_pergunta(text)
-                        enviar_mensagem_whatsapp(phone, resposta)
-
+                        if phone and text:
+                            # --- O PULO DO GATO ---
+                            # Lança uma Thread para processar sem travar o Flask
+                            thread = Thread(target=tarefa_assincrona, args=(text, phone))
+                            thread.start()
+                            
+    # Responde 200 OK em menos de 1 segundo para a Meta não dar Timeout
     return "OK", 200
 
-
-def processar_pergunta(texto: str) -> str:
-    """
-    Encapsula a chamada ao modelo de FAQ. Aqui você pode personalizar respostas.
-    """
-    resultado = buscar_resposta_faq(texto, limite_similaridade=0.55)
-
-    if resultado["confiavel"]:
-        resposta = resultado["resposta_encontrada"]
-    else:
-        resposta = (
-            "Não tenho alta confiança para responder exatamente essa pergunta.\n"
-            "Tente reformular ou consulte um profissional de saúde."
-        )
-
-    return resposta
-
-
-def enviar_mensagem_whatsapp(to: str, message: str):
-    """
-    Envia resposta de texto via WhatsApp Cloud API.
-    """
-    if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
-        print("ERRO: configure WHATSAPP_TOKEN e WHATSAPP_PHONE_ID nas variáveis de ambiente.")
-        return
-
-    url = f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_ID}/messages"
-
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": message},
-    }
-
-    resp = requests.post(url, headers=headers, json=payload)
-    print("Status WhatsApp:", resp.status_code, resp.text)
-
-
 if __name__ == "__main__":
-    # Para testes locais
-    app.run(host="0.0.0.0", port=8000, debug=True)
-
+    app.run(host="0.0.0.0", port=8000)
