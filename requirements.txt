@@ -1,7 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
+sentence-transformers
 Flask
 requests
 gunicorn
 pandas
 numpy
-sentence-transformers
-torch --index-url https://download.pytorch.org/whl/cpu

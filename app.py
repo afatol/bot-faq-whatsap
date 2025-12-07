@@ -122,7 +122,7 @@ faq_data = [
 faq_df = pd.DataFrame(faq_data)
 perguntas_faq = faq_df["pergunta_faq"].tolist()
 
-model_name = model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+model_name "paraphrase-multilingual-MiniLM-L6-v2"
 model = SentenceTransformer(model_name)
 model = SentenceTransformer(model_name)
 
